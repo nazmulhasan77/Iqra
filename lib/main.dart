@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'config/firebase_config.dart';
+import 'screens/recitation/recitation_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,14 +68,21 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
             const SizedBox(height: 40),
-            ElevatedButton(
-              onPressed: () {
-                // TODO: Navigate to registration/login
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+            Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RecitationScreen(),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                ),
+                child: const Text('Start Recitation'),
               ),
-              child: const Text('Get Started'),
             ),
           ],
         ),

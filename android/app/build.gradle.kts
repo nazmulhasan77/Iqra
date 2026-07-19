@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.butterflydevs.iqc_iqra"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
