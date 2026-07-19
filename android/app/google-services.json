@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1013312513620",
+    "project_id": "iqc-iqra",
+    "storage_bucket": "iqc-iqra.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1013312513620:android:117974938a2a0d0ea76fc1",
+        "android_client_info": {
+          "package_name": "com.butterflydevs.iqc_iqra"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1013312513620-qislu8dlk8eo186qvlf82kh8o5lb2t2q.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDM6QgKR4hLBS8lGUqZ9ivr_ULtSFCwpHI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1013312513620-qislu8dlk8eo186qvlf82kh8o5lb2t2q.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
