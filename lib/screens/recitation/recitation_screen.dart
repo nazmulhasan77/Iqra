@@ -1,12 +1,12 @@
+import 'dart:io';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'dart:io';
+
+import '../../models/arabic_detection_result.dart';
 import '../../services/permission_service.dart';
 import '../../services/verification_service.dart';
-import '../../services/recitation_service.dart';
-import '../../models/recitation_submission.dart';
-import 'package:uuid/uuid.dart';
 
 class RecitationScreen extends StatefulWidget {
   const RecitationScreen({super.key});
@@ -19,18 +19,16 @@ class _RecitationScreenState extends State<RecitationScreen> {
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   final VerificationService _verificationService = VerificationService();
-  final RecitationService _recitationService = RecitationService();
-  final Uuid _uuid = const Uuid();
 
   bool _isRecording = false;
   bool _isPlaying = false;
-  String? _recordingPath;
-  String _verificationResult = '';
   bool _isVerifying = false;
   bool _isModelLoading = true;
-  double _similarityScore = 0.0;
+  String? _recordingPath;
+  String _verificationResult = '';
+  double _arabicRatio = 0.0;
+  String _detectedText = '';
 
-  // Sample Quran verses for demo
   final List<Map<String, String>> _quranVerses = [
     {
       'arabic': 'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ',
@@ -67,16 +65,18 @@ class _RecitationScreenState extends State<RecitationScreen> {
   Future<void> _loadModel() async {
     try {
       await _verificationService.initModel();
+      if (!mounted) return;
       setState(() => _isModelLoading = false);
     } catch (e) {
-      _showError('Failed to load speech recognition model: $e');
+      if (!mounted) return;
+      setState(() => _isModelLoading = false);
+      _showError('Failed to load local Arabic detector: $e');
     }
   }
 
   Future<void> _startRecording() async {
     try {
-      // Check microphone permission
-      final hasPermission =
+      final bool hasPermission =
           await PermissionService.requestMicrophonePermission();
       if (!hasPermission) {
         _showError('Microphone permission is required for recording');
@@ -84,8 +84,8 @@ class _RecitationScreenState extends State<RecitationScreen> {
       }
 
       if (await _recorder.hasPermission()) {
-        final directory = Directory.systemTemp;
-        final path =
+        final Directory directory = Directory.systemTemp;
+        final String path =
             '${directory.path}/recitation_${DateTime.now().millisecondsSinceEpoch}.wav';
 
         await _recorder.start(
@@ -97,10 +97,13 @@ class _RecitationScreenState extends State<RecitationScreen> {
           path: path,
         );
 
+        if (!mounted) return;
         setState(() {
           _isRecording = true;
           _recordingPath = path;
           _verificationResult = '';
+          _arabicRatio = 0.0;
+          _detectedText = '';
         });
       }
     } catch (e) {
@@ -110,7 +113,8 @@ class _RecitationScreenState extends State<RecitationScreen> {
 
   Future<void> _stopRecording() async {
     try {
-      final path = await _recorder.stop();
+      final String? path = await _recorder.stop();
+      if (!mounted) return;
       setState(() {
         _isRecording = false;
         _recordingPath = path;
@@ -125,10 +129,13 @@ class _RecitationScreenState extends State<RecitationScreen> {
 
     try {
       await _player.play(DeviceFileSource(_recordingPath!));
+      if (!mounted) return;
       setState(() => _isPlaying = true);
 
-      _player.onPlayerComplete.listen((_) {
-        setState(() => _isPlaying = false);
+      _player.onPlayerComplete.first.then((_) {
+        if (mounted) {
+          setState(() => _isPlaying = false);
+        }
       });
     } catch (e) {
       _showError('Failed to play recording: $e');
@@ -141,67 +148,38 @@ class _RecitationScreenState extends State<RecitationScreen> {
       return;
     }
 
-    setState(() => _isVerifying = true);
+    setState(() {
+      _isVerifying = true;
+      _verificationResult = '';
+    });
 
     try {
-      // Step 1: Get target verses text
-      List<String> targetVerses = _quranVerses
-          .map((v) => v['arabic']!)
-          .toList();
+      final ArabicDetectionResult result =
+          await _verificationService.detectArabic(File(_recordingPath!));
 
-      // Step 2: Transcribe audio (offline with Vosk)
-      File audioFile = File(_recordingPath!);
-      String transcribedText = await _verificationService.transcribeAudio(
-        audioFile,
-      );
+      final String resultText = result.isArabic
+          ? '✅ Arabic speech detected. You can continue.'
+          : '❌ Arabic speech was not detected confidently. Please recite again.';
 
-      // Step 3: Calculate similarity score
-      double similarityScore = _verificationService.calculateSimilarity(
-        transcribedText,
-        targetVerses,
-      );
-
-      // Step 4: Upload audio to Firebase Storage (replace 'test_user_id' with actual user ID later)
-      String audioUrl = await _verificationService.uploadAudioToStorage(
-        audioFile,
-        'test_user_id',
-      );
-
-      // Step 5: Determine result based on score (threshold: 70%)
-      bool isVerified = similarityScore >= 0.7;
-      String resultText = isVerified
-          ? '✅ Alhamdulillah! Your recitation has been verified successfully.\nScore: ${(similarityScore * 100).toStringAsFixed(1)}%'
-          : '❌ Verification failed. Please try again.\nScore: ${(similarityScore * 100).toStringAsFixed(1)}%';
-
-      // Step 6: Save submission to Firestore
-      RecitationSubmission submission = RecitationSubmission(
-        id: _uuid.v4(),
-        assignmentId:
-            'test_assignment_id', // Replace with actual assignment ID later
-        audioUrl: audioUrl,
-        submissionTime: DateTime.now(),
-        verificationScore: similarityScore,
-        verificationResult: isVerified ? 'success' : 'failed',
-        retryNumber: 0,
-        feedback: 'Transcribed: $transcribedText',
-      );
-      await _recitationService.submitRecitation(submission);
-
+      if (!mounted) return;
       setState(() {
         _isVerifying = false;
         _verificationResult = resultText;
-        _similarityScore = similarityScore;
+        _arabicRatio = result.arabicRatio;
+        _detectedText = result.transcribedText;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isVerifying = false);
-      _showError('Verification failed: $e');
+      _showError('Arabic detection failed: $e');
     }
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -212,14 +190,22 @@ class _RecitationScreenState extends State<RecitationScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: _isModelLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Preparing offline Arabic detector...'),
+                ],
+              ),
+            )
           : SingleChildScrollView(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Quran Verses Section
                     const Text(
                       'Today\'s Verses',
                       style: TextStyle(
@@ -228,10 +214,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
                     ..._quranVerses.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final verse = entry.value;
+                      final int index = entry.key;
+                      final Map<String, String> verse = entry.value;
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         child: Padding(
@@ -264,11 +249,8 @@ class _RecitationScreenState extends State<RecitationScreen> {
                           ),
                         ),
                       );
-                    }).toList(),
-
+                    }),
                     const SizedBox(height: 24),
-
-                    // Recording Section
                     const Text(
                       'Record Your Recitation',
                       style: TextStyle(
@@ -276,22 +258,27 @@ class _RecitationScreenState extends State<RecitationScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'The app only checks whether the recorded speech is Arabic. '
+                      'It does not judge Tajweed or exact Ayah accuracy.',
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
                     const SizedBox(height: 16),
-
-                    // Recording Controls
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         ElevatedButton.icon(
-                          onPressed: _isRecording
-                              ? _stopRecording
-                              : _startRecording,
+                          onPressed: _isVerifying
+                              ? null
+                              : (_isRecording
+                                  ? _stopRecording
+                                  : _startRecording),
                           icon: Icon(_isRecording ? Icons.stop : Icons.mic),
                           label: Text(_isRecording ? 'Stop' : 'Record'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: _isRecording
-                                ? Colors.red
-                                : Colors.green,
+                            backgroundColor:
+                                _isRecording ? Colors.red : Colors.green,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
                               horizontal: 24,
@@ -301,7 +288,9 @@ class _RecitationScreenState extends State<RecitationScreen> {
                         ),
                         if (_recordingPath != null && !_isRecording)
                           ElevatedButton.icon(
-                            onPressed: _isPlaying ? null : _playRecording,
+                            onPressed: _isPlaying || _isVerifying
+                                ? null
+                                : _playRecording,
                             icon: const Icon(Icons.play_arrow),
                             label: const Text('Play'),
                             style: ElevatedButton.styleFrom(
@@ -315,10 +304,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
                           ),
                       ],
                     ),
-
                     const SizedBox(height: 16),
-
-                    // Recording Status
                     if (_isRecording)
                       Card(
                         color: Colors.red.shade50,
@@ -331,37 +317,36 @@ class _RecitationScreenState extends State<RecitationScreen> {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.red,
-                                  ),
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.red),
                                 ),
                               ),
                               SizedBox(width: 12),
-                              Text('Recording...'),
+                              Text('Recording... Speak clearly for 2–5 seconds.'),
                             ],
                           ),
                         ),
                       ),
-
                     const SizedBox(height: 24),
-
-                    // Verification Section
                     ElevatedButton.icon(
-                      onPressed: _isVerifying ? null : _verifyRecitation,
+                      onPressed: _isVerifying || _isRecording
+                          ? null
+                          : _verifyRecitation,
                       icon: _isVerifying
                           ? const SizedBox(
                               width: 20,
                               height: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
-                                ),
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Colors.white),
                               ),
                             )
-                          : const Icon(Icons.check_circle),
+                          : const Icon(Icons.language),
                       label: Text(
-                        _isVerifying ? 'Verifying...' : 'Verify Recitation',
+                        _isVerifying
+                            ? 'Detecting Arabic...'
+                            : 'Check Arabic Language',
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.deepPurple,
@@ -372,10 +357,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 16),
-
-                    // Verification Result
                     if (_verificationResult.isNotEmpty)
                       Card(
                         color: _verificationResult.startsWith('✅')
@@ -396,16 +378,33 @@ class _RecitationScreenState extends State<RecitationScreen> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Arabic-script evidence: ${(_arabicRatio * 100).toStringAsFixed(0)}%',
+                              ),
+                              const SizedBox(height: 6),
                               LinearProgressIndicator(
-                                value: _similarityScore,
+                                value: _arabicRatio,
                                 backgroundColor: Colors.grey.shade300,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  _similarityScore >= 0.7
+                                  _arabicRatio >= 0.60
                                       ? Colors.green
                                       : Colors.red,
                                 ),
                               ),
+                              if (_detectedText.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'Local detector heard:',
+                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _detectedText,
+                                  textDirection: TextDirection.rtl,
+                                  style: const TextStyle(fontSize: 18),
+                                ),
+                              ],
                             ],
                           ),
                         ),
